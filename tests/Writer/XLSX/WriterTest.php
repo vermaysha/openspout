@@ -1516,4 +1516,60 @@ final class WriterTest extends TestCase
 
         return $xmlReader;
     }
+
+    public function testAddNewSheetAndMakeItCurrentLeaksFileHandles(): void
+    {
+        if (!is_dir('/proc/self/fd')) {
+            self::markTestSkipped('This test requires Linux with /proc/self/fd');
+        }
+
+        $fileName = 'test_sheet_file_handle_leak.xlsx';
+        $resourcePath = (new TestUsingResource())->getGeneratedResourcePath($fileName);
+        $options = new Options();
+        $options->setTempFolder((new TestUsingResource())->getTempFolderPath());
+        $writer = new Writer($options);
+        $writer->openToFile($resourcePath);
+
+        $countFds = static function (): int {
+            $fds = scandir('/proc/self/fd');
+            \assert(false !== $fds);
+
+            return \count($fds) - 2; // exclude . and ..
+        };
+
+        $fdsAfterOpen = $countFds();
+
+        $numSheets = 10;
+        for ($i = 0; $i < $numSheets; ++$i) {
+            $writer->addNewSheetAndMakeItCurrent();
+        }
+
+        $fdsAfterAdd = $countFds();
+        $writer->close();
+        $fdsAfterClose = $countFds();
+
+        // Each additional sheet opens 3 file handles (sheet XML, comments XML, drawing VML)
+        // that remain open until close(). The first sheet's handles are already in $fdsAfterOpen.
+        $minimumExpectedIncrease = ($numSheets - 1) * 3;
+        $actualIncrease = $fdsAfterAdd - $fdsAfterOpen;
+
+        self::assertLessThan(
+            $minimumExpectedIncrease,
+            $actualIncrease,
+            \sprintf(
+                'Expected less than %d additional file handles for %d sheets, but got %d. '
+                .'This confirms file handles are recycled (close before switch).',
+                $minimumExpectedIncrease,
+                $numSheets,
+                $actualIncrease,
+            )
+        );
+
+        // After close(), handles must return to near-initial level
+        self::assertLessThanOrEqual(
+            $fdsAfterOpen + 2,
+            $fdsAfterClose,
+            'Writer::close() should release all accumulated file handles'
+        );
+    }
 }
