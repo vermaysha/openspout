@@ -106,7 +106,7 @@ final class CommentsManager
         $sheetId = $sheet->getId();
 
         if (!isset($this->commentsFilePointers[$sheetId])) {
-            return;
+            $this->reopenTempCommentFiles($sheet);
         }
 
         $commentFp = $this->commentsFilePointers[$sheetId];
@@ -146,6 +146,11 @@ final class CommentsManager
     public function reopenTempCommentFiles(Worksheet $sheet): void
     {
         $sheetId = $sheet->getId();
+
+        // already open, avoid leaking existing handles
+        if (isset($this->commentsFilePointers[$sheetId])) {
+            return;
+        }
 
         $commentFp = fopen($this->getCommentsFilePath($sheet), 'a');
         \assert(false !== $commentFp);
